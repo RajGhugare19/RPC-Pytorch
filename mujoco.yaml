@@ -1,0 +1,27 @@
+svg_params:
+  env_name : 'Hopper-v2'
+  device : 'cuda'
+  seed : 1
+  num_train_steps : 1000000
+  learning_starts : 5000
+  gamma : 0.99
+  alpha : 0.2
+  tau : 0.005
+  
+  env_buffer_size : 100000
+
+  target_update_interval : 1
+  log_interval : 500
+  save_snapshot_interval : 250000
+  eval_episode_interval : 50000
+  num_eval_episodes : 5
+  
+  latent_dims : 50
+  model_hidden_dims : 256
+  model_num_layers : 2
+  kl_constraint : 1
+  lambda_init : 0.000001
+  alpha_autotune : False
+
+  batch_size : 256
+  lr : 0.0003

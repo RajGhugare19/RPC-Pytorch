@@ -1,8 +1,8 @@
-svg_params:
-  env_name : 'Hopper-v2'
+rmbrl_params:
+  env_name : 'InvertedPendulum-v2'
   device : 'cuda'
   seed : 1
-  num_train_steps : 1000000
+  num_train_steps : 25000
   learning_starts : 5000
   gamma : 0.99
   alpha : 0.2
@@ -12,16 +12,18 @@ svg_params:
 
   target_update_interval : 1
   log_interval : 500
-  save_snapshot_interval : 250000
-  eval_episode_interval : 50000
+  save_snapshot_interval : 50000
+  eval_episode_interval : 5000
   num_eval_episodes : 5
   
   latent_dims : 50
   model_hidden_dims : 256
   model_num_layers : 2
-  kl_constraint : 1
-  lambda_init : 0.000001
+  kl_constraint : 10
+  lambda_init : 0.00001
   alpha_autotune : False
 
   batch_size : 256
+  seq_len : 4
   lr : 0.0003
+

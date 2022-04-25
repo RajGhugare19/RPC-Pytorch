@@ -73,20 +73,22 @@ class MujocoWorkspace:
     def setup(self):
         self.train_env = gym.make(self.args.env_name)
         self.eval_env = gym.make(self.args.env_name)        
-        self.checkpoint_path = os.path.join(self.work_dir,'checkpoints/' + self.args.agent +'_' + self.args.env_name + '/' + str(datetime.datetime.now())) 
-        os.makedirs(self.checkpoint_path, exist_ok=True)
-
+        self.robust_env = gym.make(self.args.env_name)
+        
     def set_seeds_everywhere(self):
         random.seed(self.args.seed)
         np.random.seed(self.args.seed)
         torch.manual_seed(self.args.seed)
         torch.backends.cudnn.deterministic = True
-        self.train_env.seed(self.args.seed)
+        self.train_env.reset(seed=self.args.seed)
         self.train_env.action_space.seed(self.args.seed)
         self.train_env.observation_space.seed(self.args.seed)
-        self.eval_env.seed(self.args.seed)
+        self.eval_env.reset(seed = self.args.seed)
         self.eval_env.action_space.seed(self.args.seed)
         self.eval_env.observation_space.seed(self.args.seed)
+        self.robust_env.reset(seed=self.args.seed)
+        self.robust_env.action_space.seed(self.args.seed)
+        self.robust_env.observation_space.seed(self.args.seed)
 
     def train(self):
         state, done, episode_return, episode_length = self.train_env.reset(), False, 0., 0
@@ -112,6 +114,9 @@ class MujocoWorkspace:
                 self.agent.update(self._global_step)
                 duration_step = time.time()-start
             
+            if (self._global_step)%1000==0:
+                self.eval_robustness()
+
             if (self._global_step+1)%self.args.eval_episode_interval==0:
                 self.eval()
 
@@ -123,11 +128,11 @@ class MujocoWorkspace:
                 self._global_episode += 1
                 print("Episode: {}, total numsteps: {}, return: {}".format(self._global_episode, self._global_step, round(episode_return, 2)))
                 episode_metrics = {}
+                if self._global_step > self.args.learning_starts:
+                    episode_metrics['duration_step'] = duration_step
                 episode_metrics['episodic_length'] = episode_length
                 episode_metrics['episodic_return'] = episode_return
                 episode_metrics['env_buffer_length'] = len(self.agent.env_buffer)
-                if self.args.learning_starts < self._global_step:
-                    episode_metrics['env_step_duration'] = duration_step
 
                 wandb.log(episode_metrics, step=self._global_step)
                 state, done, episode_return, episode_length = self.train_env.reset(), False, 0., 0
@@ -145,6 +150,8 @@ class MujocoWorkspace:
                 with torch.no_grad():
                     action = self.agent.get_action(state, True)
                 next_state, reward, done , _ = self.eval_env.step(action)
+                self.eval_env.render()
+                time.sleep(0.1)
                 returns += reward
                 steps += 1
                 state = next_state
@@ -157,6 +164,28 @@ class MujocoWorkspace:
         eval_metrics['eval_episodic_return'] = returns/self.args.num_eval_episodes
         eval_metrics['eval_episodic_length'] = steps/self.args.num_eval_episodes
         wandb.log(eval_metrics, step = self._global_step)
+
+    def eval_robustness(self):
+        steps, returns = 0, 0
+
+        for e in range(2):
+            done = False 
+            state = self.robust_env.reset()
+            while not done:
+                r = random.uniform(0.0, 1.0)
+                if r>0.5:
+                    state[0] += 2*(np.random.rand()-0.5) 
+                with torch.no_grad():
+                    action = self.agent.get_action(state, True)
+                next_state, reward, done , _ = self.robust_env.step(action)
+                returns += reward
+                steps += 1
+                state = next_state
+
+        robust_metrics = {}
+        robust_metrics['robust_episodic_return'] = returns/2
+        robust_metrics['robust_episodic_length'] = steps/2
+        wandb.log(robust_metrics, step = self._global_step)
 
     def save_snapshot(self, best=False):
         keys_to_save = ['agent', '_global_step', '_global_episode']
@@ -190,12 +219,14 @@ def main():
 
     with open("mujoco.yaml", 'r') as stream:
         mujoco_config = yaml.safe_load(stream)
-    args = parse_args(mujoco_config['svg_params'])
+    args = parse_args(mujoco_config['rmbrl_params'])
     
-    with wandb.init(project=args.agent, entity='raj19', group=args.env_name, config=args.__dict__):
-        wandb.run.name = args.env_name+'_'+str(args.seed)
-        workspace = MujocoWorkspace(args)
-        workspace.train()
+    #with wandb.init(project=args.agent, entity='raj19', group=args.env_name, config=args.__dict__):
+    #wandb.run.name = args.env_name+'_'+str(args.seed)
+    workspace = MujocoWorkspace(args)
+    workspace.load_best()
+    workspace.eval()
+    #workspace.train()
 
 if __name__ == '__main__':
     main()

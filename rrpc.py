@@ -27,35 +27,43 @@ class Encoder(nn.Module):
         std = self.std_min  + F.softplus(std-self.std_min) 
         return td.independent.Independent(td.Normal(mean, std), 1)
 
-class ModelPrior(nn.Module):
-    def __init__(self, latent_dims, action_dims, hidden_dims=256, num_layers=2):
+class RecurrentModelPrior(nn.Module):
+    def __init__(self, latent_dims, action_dims, hidden_dims, num_layers):
         super().__init__()
-        self.latent_dims = latent_dims
-        self.action_dims = action_dims
-        self.hidden_dims = hidden_dims
-        self.num_layers = num_layers
+        self.recurrent_hidden_dims = hidden_dims
+        self.recurrent_num_layers = num_layers
         self.std_min = 0.1
         self.std_max = 10.0
-        self.model = self._build_model()
-        self.apply(weight_init)
 
-    def _build_model(self):
-        model = [nn.Linear(self.action_dims + self.latent_dims, self.hidden_dims)]
-        model += [nn.ReLU()]
-        for i in range(self.num_layers-1):
-            model += [nn.Linear(self.hidden_dims, self.hidden_dims)]
-            model += [nn.ReLU()]
-        model += [nn.Linear(self.hidden_dims, 2*self.latent_dims)]
-        return nn.Sequential(*model)
+        self.state_action_embedding = nn.Sequential(
+            nn.Linear(latent_dims + action_dims, hidden_dims),
+            nn.ReLU()
+        )
 
-    def forward(self, z, action):
+        self.rnn = nn.GRU(hidden_dims, hidden_dims, num_layers=num_layers)
+        
+        self.latent_decoder = nn.Sequential(
+            nn.ReLU(),
+            nn.Linear(hidden_dims, latent_dims*2)
+        )
+
+    def forward(self, z, action, h_prev, return_hidden=False):
         x = torch.cat([z, action], axis=-1)
-        x = self.model(x)
+        x = self.state_action_embedding(x)
+        x, h = self.rnn(x, h_prev)
+        x = self.latent_decoder(x)
         mean, std = torch.chunk(x, 2, -1)
         mean = 30 * torch.tanh(mean / 30)
         std = self.std_max - F.softplus(self.std_max-std)
         std = self.std_min  + F.softplus(std-self.std_min) 
-        return td.independent.Independent(td.Normal(mean, std), 1)
+
+        if return_hidden:
+            return td.independent.Independent(td.Normal(mean, std), 1), h
+        else:
+            return td.independent.Independent(td.Normal(mean, std), 1)
+
+    def _init_hidden_state(self, batch_size, device):
+        return torch.zeros(self.recurrent_num_layers, batch_size, self.recurrent_hidden_dims).to(device)
 
 class Critic(nn.Module):
     def __init__(self, latent_dims, action_shape):
@@ -129,8 +137,8 @@ class Actor(nn.Module):
 class RPCAgent(object):
     def __init__(self, env, device, num_states, num_actions, gamma, tau, env_buffer_size,
                 target_update_interval, log_interval, 
-                latent_dims, model_hidden_dims, model_num_layers, kl_constraint, lambda_init, 
-                alpha, alpha_autotune, batch_size, lr):
+                latent_dims, model_hidden_dims, kl_constraint, lambda_init, 
+                alpha, alpha_autotune, seq_len, batch_size, lr):
 
         self.device = device 
         self.low = torch.tensor(env.action_space.low, device=device)
@@ -143,12 +151,13 @@ class RPCAgent(object):
         self.log_interval = log_interval
 
         self.kl_constraint = kl_constraint
+        self.seq_len = seq_len
         self.batch_size = batch_size
 
         self.env_buffer = ReplayMemory(env_buffer_size, num_states, num_actions, np.float32)
 
         self.encoder = Encoder(num_states, latent_dims).to(device)
-        self.model = ModelPrior(latent_dims, num_actions, model_hidden_dims, model_num_layers).to(device)
+        self.model = RecurrentModelPrior(latent_dims, num_actions, model_hidden_dims, 1).to(device)
         self.actor = Actor(latent_dims, num_actions, env).to(device)
         self.critic = Critic(num_states, num_actions).to(device)
         self.critic_target = Critic(num_states, num_actions).to(device)
@@ -185,17 +194,17 @@ class RPCAgent(object):
     def update(self, step):
         metrics = {}
 
-        state_batch, action_batch, reward_batch, next_state_batch, done_batch = self.env_buffer.sample(self.batch_size)
-        state_batch = torch.FloatTensor(state_batch).to(self.device)
-        next_state_batch = torch.FloatTensor(next_state_batch).to(self.device)
-        action_batch = torch.FloatTensor(action_batch).to(self.device)
-        reward_batch = torch.FloatTensor(reward_batch).to(self.device)
-        done_batch = torch.FloatTensor(done_batch).to(self.device)  
-        discount_batch = self.gamma*(1-done_batch)
+        state_seq, action_seq, reward_seq, next_state_seq, done_seq = self.env_buffer.sample_seq(10, 50)
+        state_seq = torch.FloatTensor(state_seq).to(self.device)
+        next_state_seq = torch.FloatTensor(next_state_seq).to(self.device)
+        action_seq = torch.FloatTensor(action_seq).to(self.device)
+        reward_seq = torch.FloatTensor(reward_seq).to(self.device)
+        done_seq = torch.FloatTensor(done_seq).to(self.device)  
+        discount_seq = self.gamma*(1-done_seq)
 
-        kl, z_dist, z_next_dist, _ = self.kl_loss(state_batch, action_batch, next_state_batch, step, metrics)
-        critic_loss = self.critic_loss(state_batch, action_batch, reward_batch, kl.detach(), next_state_batch, z_next_dist.sample(), discount_batch, step, metrics)
-        actor_loss, log_pi = self.actor_loss(state_batch, z_dist.rsample(), step, metrics)
+        kl, z_dist, z_next_dist, _ = self.kl_loss(state_seq, action_seq, next_state_seq, step, metrics)
+        critic_loss = self.critic_loss(state_seq, action_seq, reward_seq, kl.detach(), next_state_seq, z_next_dist.sample(), discount_seq, step, metrics)
+        actor_loss, log_pi = self.actor_loss(state_seq, z_dist.rsample(), step, metrics)
         
         self.encoder_opt.zero_grad()
         self.critic_opt.zero_grad()
@@ -216,23 +225,24 @@ class RPCAgent(object):
             self.update_alpha(log_pi, step, metrics)
 
         if step%self.log_interval==0:
-            wandb.log(metrics, step=step)            
+            wandb.log(metrics, step=step)  
 
-    def kl_loss(self, state_batch, action_batch, next_state_batch, step, metrics):
-        z_dist = self.encoder(state_batch)
-        z_batch = z_dist.sample()
+    def kl_loss(self, state_seq, action_seq, next_state_seq, step, metrics):
+        z_dist = self.encoder(state_seq)
+        z_seq = z_dist.sample()
 
-        z_next_dist = self.encoder(next_state_batch)
-        z_next_prior_dist = self.model(z_batch, action_batch)
+        z_next_dist = self.encoder(next_state_seq)
+        init_hidden_state = self.model._init_hidden_state(self.batch_size, self.device)
+        z_next_prior_dist = self.model(z_seq, action_seq, init_hidden_state)
 
-        kl = td.kl_divergence(z_next_dist, z_next_prior_dist)
+        kl = td.kl.kl_divergence(z_next_dist, z_next_prior_dist)
 
         if step%self.log_interval==0:
             metrics['kl_predictor'] = kl.mean().item()
             metrics['posterior_entropy'] = z_next_dist.entropy().mean().item()
             metrics['prior_entropy'] = z_next_prior_dist.entropy().mean().item()
-        return kl, z_dist, z_next_dist, z_next_prior_dist
-
+        return kl, z_dist, z_next_dist
+    
     def critic_loss(self, state_batch, action_batch, reward_batch, kl, next_state_batch, z_next_batch, discount_batch, step, metrics):
         with torch.no_grad():    
             next_action_batch, next_log_pi, _ = self.actor.get_action(z_next_batch)
@@ -291,4 +301,3 @@ class RPCAgent(object):
         if step%self.log_interval==0:
             metrics['alpha_loss'] = alpha_loss.item()
             metrics['alpha'] = self.alpha
-

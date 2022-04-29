@@ -1,12 +1,16 @@
 # RPC-Pytorch
 Pytorch replication of the paper : [Robust Predictable Control](https://arxiv.org/abs/2109.03214)
 
-# Results
+# Run code
 
-### RPC agent using 0.3 bits/time-step on Ant-v2  
+Run the original rpc agent with a KL constraint of 10 bits/t and evaluate with a noise factor of 3.
 
-<img src="images/Ant_0.3bits_per_step.png" title="ant_0.3_bits"/>
-
-### RPC agent using 1 bits/time-step on Hopper-v2  
-
-<img src="images/Hopper_1bit_per_step.png" title="hopper_1_bit"/>
+  ```
+  python rpc.py --kl_constraint 10 --noise_factor 3
+  ``` 
+ 
+Run the rpc agent with a recurrent prior with a KL constraint of 10 bits/t and evaluate with a noise factor of 2.
+  
+  ```
+  python rrpc.py --kl_constraint 10 --noise_factor 2
+  ``` 

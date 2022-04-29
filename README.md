@@ -14,3 +14,11 @@ Run the rpc agent with a recurrent prior with a KL constraint of 1 bits / timest
   ```
   python train.py --agent 'RRPC' --kl_constraint 10 --noise_factor 2
   ``` 
+
+# Command line arguments which can be set
+
+- `device`:  use cuda or not
+- `num_train_steps` : total training time-steps
+- `buffer_size` maximum size of the data set
+- `seq_len` length of the sequence to sample for training the recurrent prior
+- `lambda_init` initial value for the dual parameter

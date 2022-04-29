@@ -1,4 +1,4 @@
-rmbrl_params:
+rpc_params:
   env_name : 'InvertedPendulum-v2'
   device : 'cuda'
   seed : 1
@@ -13,16 +13,16 @@ rmbrl_params:
   target_update_interval : 1
   log_interval : 500
   save_snapshot_interval : 50000
-  eval_episode_interval : 5000
-  num_eval_episodes : 5
+  eval_episode_interval : 1000
+  num_eval_episodes : 1
   
   latent_dims : 50
   model_hidden_dims : 256
   model_num_layers : 2
-  kl_constraint : 10
+  kl_constraint : 1
   lambda_init : 0.00001
   alpha_autotune : False
-
+  noise_factor : 1
   batch_size : 256
   seq_len : 4
   lr : 0.0003

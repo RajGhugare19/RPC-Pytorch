@@ -39,7 +39,7 @@ def parse_args(config):
     parser.add_argument('--lambda_init', type=float, default=config['lambda_init'])
     parser.add_argument('--alpha_autotune', type=str, default=config['alpha_autotune'])
     parser.add_argument('--alpha_init', type=float, default=config['alpha'])
-
+    parser.add_argument('--noise_factor', type=float, default=config['noise_factor'])
     parser.add_argument('--batch_size', type=int, default=config['batch_size'])
     parser.add_argument('--seq_len', type=int, default=config['seq_len'])
     parser.add_argument('--lr', type=float, default=config['lr'])
@@ -128,11 +128,9 @@ class MujocoWorkspace:
                 self.agent.update(self._global_step)
                 duration_step = time.time()-start
             
-            if (self._global_step)%1000==0:
-                self.eval_robustness()
-
             if (self._global_step+1)%self.args.eval_episode_interval==0:
                 self.eval()
+                self.eval_robustness()
 
             if self._global_step%self.args.save_snapshot_interval==0:
                 self.save_snapshot()
@@ -180,13 +178,13 @@ class MujocoWorkspace:
     def eval_robustness(self):
         steps, returns = 0, 0
 
-        for _ in range(5):
+        for _ in range(1):
             done = False 
             state = self.robust_env.reset()
             while not done:
                 r = random.uniform(0.0, 1.0)
                 if r>0.5:
-                    state[0] += 1*(np.random.rand()-0.5) 
+                    state[2] += self.args.noise_factor*(np.random.rand()-0.5) 
                 with torch.no_grad():
                     action = self.agent.get_action(state, True)
                 next_state, reward, done , _ = self.robust_env.step(action)
@@ -231,9 +229,9 @@ def main():
 
     with open("mujoco.yaml", 'r') as stream:
         mujoco_config = yaml.safe_load(stream)
-    args = parse_args(mujoco_config['rmbrl_params'])
+    args = parse_args(mujoco_config['rpc_params'])
     
-    with wandb.init(project=args.agent, entity='raj19', group=args.env_name, config=args.__dict__):
+    with wandb.init(project='rpc', entity='raj19', group=args.env_name, config=args.__dict__):
         wandb.run.name = args.env_name+'_'+str(args.seed)
         workspace = MujocoWorkspace(args)
         workspace.train()
